@@ -1,0 +1,12 @@
+streamlit==1.41.1
+google-genai
+duckdb>=1.4.1
+pandas
+numpy==1.26.4
+agno>=2.2.10
+python-dotenv
+openpyxl
+fastapi==0.110.0
+uvicorn==0.28.0
+requests==2.31.0
+pydantic==2.6.4
