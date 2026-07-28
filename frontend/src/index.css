@@ -234,8 +234,7 @@ body {
 }
 
 .selector-box {
-  flex: 1;
-  min-width: 320px;
+  width: 100%;
   position: relative;
 }
 
@@ -260,7 +259,7 @@ body {
   background: rgba(17, 24, 39, 0.8);
   border: 1px solid var(--border-color);
   border-radius: 10px;
-  padding: 0.75rem 1rem;
+  padding: 0.75rem 1.5rem;
   color: var(--text-primary);
   display: flex;
   justify-content: space-between;
@@ -268,6 +267,17 @@ body {
   cursor: pointer;
   transition: all 0.2s ease;
   font-size: 0.95rem;
+  min-width: 0;
+}
+
+.dropdown-trigger span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  text-align: left;
+  margin-right: 0.5rem;
+  min-width: 0;
 }
 
 .dropdown-trigger:hover {

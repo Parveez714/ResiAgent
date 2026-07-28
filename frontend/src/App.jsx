@@ -5,26 +5,33 @@ import {
   Search, 
   Download, 
   ChevronDown, 
-  FileText, 
-  Check, 
   AlertTriangle,
+  Layers,
+  FileCheck,
   BadgeAlert,
   Coins,
   Receipt,
-  FileCheck,
-  Percent,
-  Layers,
-  ArrowRightLeft
+  ArrowRightLeft,
+  TrendingUp,
+  Database
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://localhost:8000';
 
 function App() {
+  // Tabs and general navigation
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'data'
+  const [activeDataTab, setActiveDataTab] = useState('api1'); // 'api1' | 'api2'
+
+  // Data states
   const [projects, setProjects] = useState([]);
   const [selectedProjects, setSelectedProjects] = useState([]);
   const [kpis, setKpis] = useState(null);
-  const [tableData, setTableData] = useState([]);
+  const [tableData1, setTableData1] = useState([]);
+  const [tableData2, setTableData2] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Loading and Error states
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState(null);
@@ -33,6 +40,12 @@ function App() {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [dropdownSearch, setDropdownSearch] = useState('');
   const dropdownRef = useRef(null);
+
+  // Dashboards & charts states
+  const [perspectives, setPerspectives] = useState([]);
+  const [selectedPerspective, setSelectedPerspective] = useState('');
+  const [charts, setCharts] = useState([]);
+  const [chartsLoading, setChartsLoading] = useState(false);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -45,15 +58,22 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Fetch initial data
+  // Fetch initial configuration & data
   useEffect(() => {
     loadDashboardData();
   }, []);
 
-  // Re-fetch KPIs and data when selected projects change
+  // Re-fetch metrics and data when selected projects change
   useEffect(() => {
     fetchMetricsAndData(selectedProjects);
   }, [selectedProjects]);
+
+  // Fetch charts when perspective or selected projects change
+  useEffect(() => {
+    if (selectedPerspective) {
+      fetchCharts(selectedPerspective, selectedProjects);
+    }
+  }, [selectedPerspective, selectedProjects]);
 
   const loadDashboardData = async () => {
     setLoading(true);
@@ -65,8 +85,25 @@ function App() {
       const projList = await projRes.json();
       setProjects(projList);
 
-      // 2. Fetch KPIs and Data
+      // 2. Fetch Perspectives
+      const perspRes = await fetch(`${API_BASE_URL}/api/perspectives`);
+      if (perspRes.ok) {
+        const perspList = await perspRes.json();
+        setPerspectives(perspList);
+        if (perspList.length > 0) {
+          setSelectedPerspective(perspList[0]);
+        }
+      }
+
+      // 3. Fetch KPI metrics and portfolios
       await fetchMetricsAndData(selectedProjects);
+      
+      // 4. Fetch API 2 Data
+      const data2Res = await fetch(`${API_BASE_URL}/api/data2`);
+      if (data2Res.ok) {
+        const detailedData2 = await data2Res.json();
+        setTableData2(detailedData2);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -85,13 +122,32 @@ function App() {
       const kpisData = await kpisRes.json();
       setKpis(kpisData);
 
-      // Fetch detailed table data
+      // Fetch detailed table data (API 1)
       const dataRes = await fetch(`${API_BASE_URL}/api/data?${queryParams.toString()}`);
       if (!dataRes.ok) throw new Error('Failed to load project details.');
       const detailedData = await dataRes.json();
-      setTableData(detailedData);
+      setTableData1(detailedData);
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const fetchCharts = async (perspective, selectedProjs) => {
+    setChartsLoading(true);
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.append('perspective', perspective);
+      selectedProjs.forEach(p => queryParams.append('projects', p));
+
+      const chartsRes = await fetch(`${API_BASE_URL}/api/charts?${queryParams.toString()}`);
+      if (chartsRes.ok) {
+        const chartsData = await chartsRes.json();
+        setCharts(chartsData);
+      }
+    } catch (err) {
+      console.error("Failed to load charts:", err);
+    } finally {
+      setChartsLoading(false);
     }
   };
 
@@ -147,9 +203,10 @@ function App() {
   );
 
   // Filter table records by search term
-  const filteredTableRecords = tableData.filter(record => {
-    const projName = (record.Project_Name || '').toLowerCase();
-    const sector = (record.Sector || '').toLowerCase();
+  const activeDataset = tableData1;
+  const filteredTableRecords = activeDataset.filter(record => {
+    const projName = (record.Project_Name || record.Partner_Name || record.PartnerName || record.ProjectName || '').toLowerCase();
+    const sector = (record.Sector || record.Collection_Type || '').toLowerCase();
     const search = searchTerm.toLowerCase();
     return projName.includes(search) || sector.includes(search);
   });
@@ -178,10 +235,90 @@ function App() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `filtered_projects_data.csv`);
+    link.setAttribute("download", 'portfolio_data.csv');
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Render dynamic SVG charts based on backend spec
+  const renderSVGChart = (chartSpec) => {
+    const data = chartSpec.data || [];
+    const chartType = chartSpec.chart_type;
+
+    if (data.length === 0) {
+      return <div className="text-center p-8 text-gray-500 text-xs">No chart data matching focus parameters</div>;
+    }
+
+    const maxVal = Math.max(...data.map(d => d.value), 1);
+
+    if (chartType === 'pie') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%' }}>
+          {data.map((d, i) => {
+            const pct = Math.round((d.value / maxVal) * 100);
+            return (
+              <div key={i} style={{ fontSize: '0.8rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#9ca3af', marginBottom: '2px' }}>
+                  <span className="truncate" style={{ maxWidth: '180px' }}>{d.name}</span>
+                  <span>{formatCurrency(d.value)}</span>
+                </div>
+                <div style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(to right, #10b981, #34d399)', borderRadius: '4px' }}></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    if (chartType === 'line' || chartType === 'scatter') {
+      const points = data.map((d, i) => {
+        const x = (i / (data.length - 1 || 1)) * 260 + 20;
+        const y = 130 - (d.value / maxVal) * 100;
+        return { x, y, name: d.name, val: d.value };
+      });
+      const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+      return (
+        <div style={{ position: 'relative', width: '100%', height: '150px' }}>
+          <svg viewBox="0 0 300 150" style={{ width: '100%', height: '100%' }}>
+            <line x1="20" y1="30" x2="280" y2="30" stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+            <line x1="20" y1="80" x2="280" y2="80" stroke="rgba(255,255,255,0.05)" strokeDasharray="3 3" />
+            <line x1="20" y1="130" x2="280" y2="130" stroke="rgba(255,255,255,0.1)" />
+            <path d={pathD} fill="none" stroke="#60a5fa" strokeWidth="2.5" />
+            {points.map((p, idx) => (
+              <g key={idx}>
+                <circle cx={p.x} cy={p.y} r="4" fill="#3b82f6" stroke="#030712" strokeWidth="1.5" />
+                <title>{`${p.name}: ${formatCurrency(p.val)}`}</title>
+              </g>
+            ))}
+          </svg>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', color: '#6b7280', padding: '0 10px' }}>
+            <span className="truncate" style={{ maxWidth: '80px' }}>{data[0]?.name}</span>
+            <span className="truncate" style={{ maxWidth: '80px' }}>{data[data.length - 1]?.name}</span>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', width: '100%' }}>
+        {data.map((d, i) => {
+          const pct = Math.round((d.value / maxVal) * 100);
+          return (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8rem' }}>
+              <span className="truncate" style={{ width: '80px', color: '#9ca3af', textAlign: 'right' }}>{d.name}</span>
+              <div style={{ flex: 1, height: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', overflow: 'hidden', position: 'relative' }}>
+                <div style={{ width: `${pct}%`, height: '100%', background: 'linear-gradient(to right, #3b82f6, #60a5fa)', borderRadius: '4px' }}></div>
+              </div>
+              <span style={{ width: '60px', color: '#f8fafc', fontWeight: '500' }}>{formatCurrency(d.value)}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
@@ -191,15 +328,15 @@ function App() {
         <div className="sidebar-brand">
           <Building2 className="w-8 h-8 text-sky-400" />
           <div>
-            <h2>Resi Revenue Agent</h2>
+            <h2>Resi Revenue</h2>
             <p>Real-Time Board Metrics</p>
           </div>
         </div>
 
         <div className="sidebar-divider"></div>
 
-        {/* Project Selector & Filter inside Sidebar */}
-        <div className="selector-box" ref={dropdownRef}>
+        {/* Project Selector Box above navigation buttons */}
+        <div className="selector-box" ref={dropdownRef} style={{ width: '100%' }}>
           <label className="selector-label">Project Filter (Multi-Select)</label>
           <div className="dropdown-container">
             <div 
@@ -209,7 +346,7 @@ function App() {
               <span className="truncate">
                 {selectedProjects.length === 0 
                   ? 'All Projects Selected' 
-                  : `${selectedProjects.length} Projects Selected`}
+                  : `${selectedProjects.length} Selected`}
               </span>
               <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
             </div>
@@ -256,6 +393,26 @@ function App() {
           </div>
         </div>
 
+        {/* Tab Navigation in Sidebar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', width: '100%' }}>
+          <button 
+            className={`btn-secondary ${activeTab === 'dashboard' ? 'active-tab-btn' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+            style={{ justifyContent: 'flex-start', width: '100%', background: activeTab === 'dashboard' ? 'rgba(59, 130, 246, 0.15)' : '', borderColor: activeTab === 'dashboard' ? 'var(--primary)' : '' }}
+          >
+            <TrendingUp className="w-4 h-4 text-sky-400" />
+            <span>Board Dashboard</span>
+          </button>
+          <button 
+            className={`btn-secondary ${activeTab === 'data' ? 'active-tab-btn' : ''}`}
+            onClick={() => setActiveTab('data')}
+            style={{ justifyContent: 'flex-start', width: '100%', background: activeTab === 'data' ? 'rgba(59, 130, 246, 0.15)' : '', borderColor: activeTab === 'data' ? 'var(--primary)' : '' }}
+          >
+            <Database className="w-4 h-4 text-indigo-400" />
+            <span>Live Data Statements</span>
+          </button>
+        </div>
+
         <div className="sidebar-divider"></div>
 
         <div className="sidebar-footer" style={{ marginTop: 'auto' }}>
@@ -263,6 +420,7 @@ function App() {
             className="btn-secondary btn-sync-sidebar" 
             onClick={handleSync}
             disabled={syncing || loading}
+            style={{ width: '100%' }}
           >
             <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Syncing...' : 'Sync Live Data'}
@@ -290,7 +448,9 @@ function App() {
           </div>
         )}
 
-        {/* Content Section */}
+
+
+        {/* Main Tab Content views */}
         {loading ? (
           <div className="loading-overlay">
             <div className="spinner"></div>
@@ -298,165 +458,219 @@ function App() {
           </div>
         ) : (
           <>
-            <section className="kpis-grid">
-            {/* Total Units */}
-            <div className="glass-panel kpi-card indigo">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Total Units</span>
-                <div className="kpi-card-icon">
-                  <Layers className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{(kpis?.total_units ?? 0).toLocaleString()}</div>
-              <span className="kpi-card-desc">Total project inventory units</span>
-            </div>
+            {/* 📊 TAB 1: Dashboard View */}
+            {activeTab === 'dashboard' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                
+                {/* KPIs Grid - Maintained exactly as requested */}
+                <section className="kpis-grid">
+                  {/* Total Units */}
+                  <div className="glass-panel kpi-card indigo">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Total Units</span>
+                      <div className="kpi-card-icon">
+                        <Layers className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{(kpis?.total_units ?? 0).toLocaleString()}</div>
+                    <span className="kpi-card-desc">Total project inventory units</span>
+                  </div>
 
-            {/* Sold */}
-            <div className="glass-panel kpi-card emerald">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Sold Units</span>
-                <div className="kpi-card-icon">
-                  <FileCheck className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{(kpis?.sold ?? 0).toLocaleString()}</div>
-              <span className="kpi-card-desc">Booked and signed units</span>
-            </div>
+                  {/* Sold */}
+                  <div className="glass-panel kpi-card emerald">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Sold Units</span>
+                      <div className="kpi-card-icon">
+                        <FileCheck className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{(kpis?.sold ?? 0).toLocaleString()}</div>
+                    <span className="kpi-card-desc">Booked and signed units</span>
+                  </div>
 
-            {/* Unsold */}
-            <div className="glass-panel kpi-card rose">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Unsold Units</span>
-                <div className="kpi-card-icon">
-                  <BadgeAlert className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{(kpis?.unsold ?? 0).toLocaleString()}</div>
-              <span className="kpi-card-desc">Available unit stock</span>
-            </div>
+                  {/* Unsold */}
+                  <div className="glass-panel kpi-card rose">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Unsold Units</span>
+                      <div className="kpi-card-icon">
+                        <BadgeAlert className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{(kpis?.unsold ?? 0).toLocaleString()}</div>
+                    <span className="kpi-card-desc">Available unit stock</span>
+                  </div>
 
-            {/* Sold Value */}
-            <div className="glass-panel kpi-card emerald">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Sold Value</span>
-                <div className="kpi-card-icon">
-                  <Coins className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{formatCurrency(kpis?.sold_value ?? 0)}</div>
-              <span className="kpi-card-desc">Total booked sales revenue</span>
-            </div>
+                  {/* Sold Value */}
+                  <div className="glass-panel kpi-card emerald">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Sold Value</span>
+                      <div className="kpi-card-icon">
+                        <Coins className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{formatCurrency(kpis?.sold_value ?? 0)}</div>
+                    <span className="kpi-card-desc">Total booked sales revenue</span>
+                  </div>
 
-            {/* Unsold Value */}
-            <div className="glass-panel kpi-card rose">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Unsold Value</span>
-                <div className="kpi-card-icon">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{formatCurrency(kpis?.unsold_value ?? 0)}</div>
-              <span className="kpi-card-desc">Estimated value of vacant units</span>
-            </div>
+                  {/* Unsold Value */}
+                  <div className="glass-panel kpi-card rose">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Unsold Value</span>
+                      <div className="kpi-card-icon">
+                        <AlertTriangle className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{formatCurrency(kpis?.unsold_value ?? 0)}</div>
+                    <span className="kpi-card-desc">Estimated value of vacant units</span>
+                  </div>
 
-            {/* Invoiced */}
-            <div className="glass-panel kpi-card blue">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Invoiced Amt</span>
-                <div className="kpi-card-icon">
-                  <Receipt className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{formatCurrency(kpis?.invoiced ?? 0)}</div>
-              <span className="kpi-card-desc">Total milestones invoiced to date</span>
-            </div>
+                  {/* Invoiced */}
+                  <div className="glass-panel kpi-card blue">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Invoiced Amt</span>
+                      <div className="kpi-card-icon">
+                        <Receipt className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{formatCurrency(kpis?.invoiced ?? 0)}</div>
+                    <span className="kpi-card-desc">Total milestones invoiced to date</span>
+                  </div>
 
-            {/* Receipt Amt */}
-            <div className="glass-panel kpi-card emerald">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Receipt Amt</span>
-                <div className="kpi-card-icon">
-                  <Coins className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{formatCurrency(kpis?.received ?? 0)}</div>
-              <span className="kpi-card-desc">Total collection/receipts to date</span>
-            </div>
+                  {/* Receipt Amt */}
+                  <div className="glass-panel kpi-card emerald">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Receipt Amt</span>
+                      <div className="kpi-card-icon">
+                        <Coins className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{formatCurrency(kpis?.received ?? 0)}</div>
+                    <span className="kpi-card-desc">Total collection/receipts to date</span>
+                  </div>
 
-            {/* Uninvoiced */}
-            <div className="glass-panel kpi-card rose">
-              <div className="kpi-card-header">
-                <span className="kpi-card-title">Uninvoiced Amt</span>
-                <div className="kpi-card-icon">
-                  <ArrowRightLeft className="w-5 h-5" />
-                </div>
-              </div>
-              <div className="kpi-card-value">{formatCurrency(kpis?.uninvoiced ?? 0)}</div>
-              <span className="kpi-card-desc">Balance sales value to invoice</span>
-            </div>
-          </section>
+                  {/* Uninvoiced */}
+                  <div className="glass-panel kpi-card rose">
+                    <div className="kpi-card-header">
+                      <span className="kpi-card-title">Uninvoiced Amt</span>
+                      <div className="kpi-card-icon">
+                        <ArrowRightLeft className="w-5 h-5" />
+                      </div>
+                    </div>
+                    <div className="kpi-card-value">{formatCurrency(kpis?.uninvoiced ?? 0)}</div>
+                    <span className="kpi-card-desc">Balance sales value to invoice</span>
+                  </div>
+                </section>
 
-          {/* Details Table view */}
-          <section className="glass-panel data-table-container">
-            <div className="table-header-controls">
-              <div className="search-input-wrapper">
-                <Search className="search-icon w-4 h-4" />
-                <input 
-                  type="text" 
-                  className="search-input" 
-                  placeholder="Search project name or sector..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-              <button 
-                className="btn-secondary" 
-                onClick={handleExportCSV}
-                disabled={filteredTableRecords.length === 0}
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
-            </div>
+                {/* Perspective selector & dynamic charts */}
+                <section className="glass-panel" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: '1.25rem', fontFamily: 'Outfit, sans-serif' }}>📊 Interactive Board Insights</h2>
+                      <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>Dynamic visual charts generated based on the selected focus area</span>
+                    </div>
+                    <div>
+                      <select 
+                        value={selectedPerspective} 
+                        onChange={(e) => setSelectedPerspective(e.target.value)}
+                        style={{ background: '#111827', border: '1px solid var(--border-color)', color: '#f8fafc', padding: '0.6rem 1rem', borderRadius: '8px', fontSize: '0.9rem', outline: 'none', cursor: 'pointer' }}
+                      >
+                        {perspectives.map((p, idx) => (
+                          <option key={idx} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
-            <div className="table-wrapper">
-              {filteredTableRecords.length === 0 ? (
-                <div className="p-8 text-center text-gray-400">No project records match the current filter.</div>
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Project Name</th>
-                      <th>Total Inventory</th>
-                      <th>Sold Inventory</th>
-                      <th>Available Inventory</th>
-                      <th>Total Sales Value</th>
-                      <th>Total Invoiced</th>
-                      <th>Balance to Invoice</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredTableRecords.slice(0, 150).map((row, idx) => (
-                      <tr key={idx}>
-                        <td style={{ fontWeight: '600' }}>{row.Project_Name || 'N/A'}</td>
-                        <td>{(row.TotalInventory ?? 0).toLocaleString()}</td>
-                        <td>{(row.SoldInventory ?? 0).toLocaleString()}</td>
-                        <td>{(row.AvailableInventory ?? 0).toLocaleString()}</td>
-                        <td>{formatCurrency(row.TotalSalesRealization ?? 0)}</td>
-                        <td>{formatCurrency(row.TotalInvoiced ?? 0)}</td>
-                        <td>{formatCurrency(row.BalanceToBeInvoiced ?? 0)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            {filteredTableRecords.length > 150 && (
-              <div className="pt-3 text-center text-xs text-gray-500">
-                Showing top 150 project records. Use search/filter to narrow down results.
+                  {chartsLoading ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
+                      <div className="spinner"></div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+                      {charts.map((c, i) => (
+                        <div key={i} className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <span style={{ fontWeight: '600', fontSize: '0.9rem', color: '#cbd5e1' }}>{c.title}</span>
+                          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '160px' }}>
+                            {renderSVGChart(c)}
+                          </div>
+                          {c.insight && (
+                            <div style={{ background: 'rgba(59, 130, 246, 0.05)', border: '1px solid rgba(59, 130, 246, 0.1)', padding: '0.5rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', color: '#93c5fd' }}>
+                              💡 <b>Strategic note:</b> {c.insight}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
               </div>
             )}
-          </section>
+
+            {/* 📄 TAB 3: Live API Data Statements */}
+            {activeTab === 'data' && (
+              <section className="glass-panel data-table-container">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                  <div className="search-input-wrapper" style={{ minWidth: '300px' }}>
+                    <Search className="search-icon w-4 h-4" />
+                    <input 
+                      type="text" 
+                      className="search-input" 
+                      placeholder="Search project or sector..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  
+                  <button 
+                    className="btn-secondary" 
+                    onClick={handleExportCSV}
+                    disabled={filteredTableRecords.length === 0}
+                    style={{ padding: '0.75rem', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    title="Export CSV"
+                  >
+                    <Download className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="table-wrapper">
+                  {filteredTableRecords.length === 0 ? (
+                    <div className="p-8 text-center text-gray-400">No project records match the current search filters.</div>
+                  ) : (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Project Name</th>
+                          <th>Total Inventory</th>
+                          <th>Sold Inventory</th>
+                          <th>Available Inventory</th>
+                          <th>Total Sales Value</th>
+                          <th>Total Invoiced</th>
+                          <th>Balance to Invoice</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredTableRecords.slice(0, 150).map((row, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: '600' }}>{row.Project_Name || 'N/A'}</td>
+                            <td>{(row.TotalInventory ?? 0).toLocaleString()}</td>
+                            <td>{(row.SoldInventory ?? 0).toLocaleString()}</td>
+                            <td>{(row.AvailableInventory ?? 0).toLocaleString()}</td>
+                            <td>{formatCurrency(row.TotalSalesRealization ?? 0)}</td>
+                            <td>{formatCurrency(row.TotalInvoiced ?? 0)}</td>
+                            <td>{formatCurrency(row.BalanceToBeInvoiced ?? 0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                {filteredTableRecords.length > 150 && (
+                  <div className="pt-3 text-center text-xs text-gray-500">
+                    Showing top 150 project records. Use search/filter to narrow down results.
+                  </div>
+                )}
+              </section>
+            )}
           </>
         )}
       </main>
